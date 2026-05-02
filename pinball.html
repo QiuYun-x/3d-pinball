@@ -74,7 +74,7 @@ body {
 .key-hint span { color: #ffd740; font-weight: 700; }
 </style>
 </head>
-<body>
+<body tabindex="0" id="body">
 <div id="ui">
     <div class="panel" id="score-panel">
         <div id="score-label">得分 SCORE</div>
@@ -412,17 +412,33 @@ function resetBall() {
 }
 
 // ==================== INPUT ====================
+const bodyEl = document.getElementById('body');
+bodyEl.focus();
+
+// Re-focus on any click
+document.addEventListener('click', () => bodyEl.focus());
+document.addEventListener('pointerdown', () => bodyEl.focus());
+
 const keys = {};
 window.addEventListener('keydown', (e) => {
     keys[e.key.toLowerCase()] = true;
     keys[e.code] = true;
-    e.preventDefault();
+    if (e.code === 'Space' || e.code === 'ArrowLeft' || e.code === 'ArrowRight' ||
+        e.code === 'KeyA' || e.code === 'KeyD' || e.code === 'KeyR' ||
+        e.code === 'ArrowUp' || e.code === 'ArrowDown' || e.code === 'KeyW' || e.code === 'KeyS') {
+        e.preventDefault();
+    }
 });
 window.addEventListener('keyup', (e) => {
     keys[e.key.toLowerCase()] = false;
     keys[e.code] = false;
     e.preventDefault();
 });
+
+// Blur/focus tracking
+let hasFocus = true;
+window.addEventListener('blur', () => { hasFocus = false; for (const k in keys) keys[k] = false; });
+window.addEventListener('focus', () => { hasFocus = true; bodyEl.focus(); });
 
 // ==================== PHYSICS HELPERS ====================
 function closestPointOnSegment(px, pz, ax, az, bx, bz) {
@@ -716,19 +732,23 @@ function animate(timestamp) {
     if (rawDt > 0.1) rawDt = 0.1;
 
     // ===== INPUT HANDLING =====
-    const leftActive = keys['a'] || keys['arrowleft'];
-    const rightActive = keys['d'] || keys['arrowright'];
-    const spaceDown = keys[' '] || keys['space'];
+    const leftActive = keys['a'] || keys['arrowleft'] || keys['KeyA'] || keys['ArrowLeft'];
+    const rightActive = keys['d'] || keys['arrowright'] || keys['KeyD'] || keys['ArrowRight'];
+    const spaceDown = keys[' '] || keys['space'] || keys['Space'];
+
+    if (!hasFocus && !state.ball.active) {
+        setMessage('点击游戏画面开始', 0);
+    }
 
     // Restart
-    if (keys['r']) {
+    if (keys['r'] || keys['KeyR']) {
         state.score = 0;
         state.lives = 5;
         state.gameOver = false;
         state.shakeAmount = 0;
         updateUI();
         resetBall();
-        keys['r'] = false;
+        keys['r'] = false; keys['KeyR'] = false;
     }
 
     // Launch mechanism
