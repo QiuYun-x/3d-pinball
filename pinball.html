@@ -422,6 +422,13 @@ document.addEventListener('pointerdown', () => bodyEl.focus());
 
 const keys = {};
 const debugEl = document.getElementById('debug');
+let imeActive = false;
+
+// Detect IME (Chinese input method intercepts letter keys)
+window.addEventListener('compositionstart', () => { imeActive = true; });
+window.addEventListener('compositionend', (e) => { imeActive = false; });
+
+// Use capture phase to get events before IME consumes them
 window.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
     keys[k] = true;
@@ -431,8 +438,9 @@ window.addEventListener('keydown', (e) => {
     if (relevant.includes(e.code)) {
         const la = keys['a']||keys['arrowleft']||keys['KeyA']||keys['ArrowLeft'];
         const ra = keys['d']||keys['arrowright']||keys['KeyD']||keys['ArrowRight'];
-        debugEl.textContent = 'A='+(la||false)+' D='+(ra||false)+' | leftActive='+la+' rightActive='+ra;
-        console.log('KEYDOWN code='+e.code+' key='+e.key+' keys[a]='+keys['a']+' keys[KeyA]='+keys['KeyA']+' leftActive='+la);
+        const imeWarn = imeActive ? ' [IME ON! 请切英文]' : '';
+        debugEl.textContent = 'A='+(la||false)+' D='+(ra||false)+' | code='+e.code+imeWarn;
+        console.log('KEYDOWN code='+e.code+' key='+e.key+' isComposing='+e.isComposing+' imeActive='+imeActive+' leftActive='+la);
     }
 
     if (e.code === 'Space' || e.code === 'ArrowLeft' || e.code === 'ArrowRight' ||
@@ -440,7 +448,8 @@ window.addEventListener('keydown', (e) => {
         e.code === 'ArrowUp' || e.code === 'ArrowDown' || e.code === 'KeyW' || e.code === 'KeyS') {
         e.preventDefault();
     }
-});
+}, true); // CAPTURE phase — fires before IME can consume the event
+
 window.addEventListener('keyup', (e) => {
     keys[e.key.toLowerCase()] = false;
     keys[e.code] = false;
@@ -451,7 +460,7 @@ window.addEventListener('keyup', (e) => {
         const ra = keys['d']||keys['arrowright']||keys['KeyD']||keys['ArrowRight'];
         debugEl.textContent = 'A='+(la||false)+' D='+(ra||false);
     }
-});
+}, true); // CAPTURE phase
 
 // Blur/focus tracking
 let hasFocus = true;
