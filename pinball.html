@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3D Pinball 三维弹球</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    background: #0a0a0f;
+    overflow: hidden;
+    font-family: 'Segoe UI', 'Arial', sans-serif;
+    user-select: none;
+    -webkit-user-select: none;
+}
+#game-canvas { display: block; }
+#ui {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    pointer-events: none;
+    z-index: 10;
+    padding: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+.panel {
+    background: rgba(0,0,0,0.7);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 12px;
+    padding: 14px 22px;
+    color: #fff;
+}
+#score-panel { text-align: left; }
+#score-label { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: #888; }
+#score-value { font-size: 36px; font-weight: 700; line-height: 1.1; color: #ffd740; }
+#lives-panel { text-align: right; }
+#lives-label { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: #888; }
+#lives-value { font-size: 36px; font-weight: 700; line-height: 1.1; color: #ff5252; }
+#message {
+    position: fixed;
+    bottom: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    pointer-events: none;
+    color: #fff;
+    font-size: 18px;
+    font-weight: 600;
+    text-align: center;
+    text-shadow: 0 0 20px rgba(255,255,255,0.5);
+    transition: opacity 0.3s;
+}
+#controls {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    pointer-events: none;
+    display: flex;
+    gap: 16px;
+}
+.key-hint {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 8px;
+    padding: 6px 14px;
+    color: rgba(255,255,255,0.7);
+    font-size: 13px;
+    letter-spacing: 1px;
+}
+.key-hint span { color: #ffd740; font-weight: 700; }
+</style>
+</head>
+<body>
+<div id="ui">
+    <div class="panel" id="score-panel">
+        <div id="score-label">得分 SCORE</div>
+        <div id="score-value">0</div>
+    </div>
+    <div class="panel" id="lives-panel">
+        <div id="lives-label">剩余球 LIVES</div>
+        <div id="lives-value">5</div>
+    </div>
+</div>
+<div id="message"></div>
+<div id="controls">
+    <div class="key-hint"><span>A</span> 左挡板</div>
+    <div class="key-hint"><span>D</span> 右挡板</div>
+    <div class="key-hint"><span>空格</span> 发射</div>
+    <div class="key-hint"><span>R</span> 重新开始</div>
+</div>
+<div id="game-canvas"></div>
+
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+    }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+// ==================== CONSTANTS ====================
+const TABLE_ANGLE = 0.16;
+const PLAYFIELD_W = 11;
+const PLAYFIELD_L = 18;
+const PLAYFIELD_HW = PLAYFIELD_W / 2;
+const PLAYFIELD_HL = PLAYFIELD_L / 2;
+const TABLE_THICK = 0.25;
+const WALL_H = 0.7;
+const WALL_T = 0.2;
+const BALL_R = 0.22;
+const G_EFF = 9.8 * Math.sin(TABLE_ANGLE);
+const FRICTION = 0.992;
+const WALL_BOUNCE = 0.55;
+const BUMPER_BOUNCE = 1.8;
+const BUMPER_R = 0.48;
+const FLIPPER_L = 2.2;
+const FLIPPER_W = 0.22;
+const FLIPPER_THICK = 0.1;
+const FLIPPER_SPEED = 22;
+const FLIPPER_REST = 28 * Math.PI / 180;
+const FLIPPER_ACTIVE = 72 * Math.PI / 180;
+const LAUNCH_MAX = 9.5;
+const LAUNCH_MIN = 5.5;
+const LAUNCH_X = 3.5;
+const LAUNCH_Z = -7.8;
+const DRAIN_Z = -PLAYFIELD_HL - 0.3;
+
+const BUMPER_POSITIONS = [
+    [-2.6, 4.5], [2.6, 4.5],
+    [0, 3], [-2.2, 1.2], [2.2, 1.2],
+    [0, -0.5], [-1.6, -2.5], [1.6, -2.5]
+];
+const BUMPER_COLORS = [0xff3333, 0xff3333, 0xff6600, 0xffaa00, 0xffaa00, 0xff5500, 0xff8800, 0xff8800];
+
+const LEFT_PIVOT_X = -2.0;
+const RIGHT_PIVOT_X = 2.0;
+const FLIPPER_PIVOT_Z = -7.0;
+
+// ==================== THREE.JS SETUP ====================
+const container = document.getElementById('game-canvas');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0a18);
+scene.fog = new THREE.Fog(0x0a0a18, 15, 40);
+
+const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.5, 60);
+camera.position.set(0, 10, -10);
+camera.lookAt(0, -0.5, 2.5);
+
+// ==================== LIGHTING ====================
+const ambientLight = new THREE.AmbientLight(0x334466, 1.8);
+scene.add(ambientLight);
+
+const dirLight = new THREE.DirectionalLight(0xffeedd, 3);
+dirLight.position.set(5, 15, -3);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 1024;
+dirLight.shadow.mapSize.height = 1024;
+dirLight.shadow.camera.near = 0.5;
+dirLight.shadow.camera.far = 50;
+dirLight.shadow.camera.left = -15;
+dirLight.shadow.camera.right = 15;
+dirLight.shadow.camera.top = 10;
+dirLight.shadow.camera.bottom = -5;
+dirLight.shadow.bias = -0.0001;
+scene.add(dirLight);
+
+const spotLight = new THREE.SpotLight(0xffffff, 20, 25, Math.PI / 5, 0.3, 0.5);
+spotLight.position.set(0, 12, -5);
+spotLight.castShadow = true;
+spotLight.shadow.mapSize.width = 512;
+spotLight.shadow.mapSize.height = 512;
+scene.add(spotLight);
+
+// ==================== TABLE GROUP ====================
+const tableGroup = new THREE.Group();
+tableGroup.rotation.x = -TABLE_ANGLE;
+scene.add(tableGroup);
+
+// Table surface
+const tableGeo = new THREE.BoxGeometry(PLAYFIELD_W + 0.1, TABLE_THICK, PLAYFIELD_L + 0.1);
+const tableMat = new THREE.MeshStandardMaterial({ color: 0x1a1a3a, roughness: 0.35, metalness: 0.15 });
+const tableMesh = new THREE.Mesh(tableGeo, tableMat);
+tableMesh.position.y = -TABLE_THICK / 2;
+tableMesh.receiveShadow = true;
+tableMesh.castShadow = true;
+tableGroup.add(tableMesh);
+
+// Playfield surface (decorative inner area)
+const fieldGeo = new THREE.PlaneGeometry(PLAYFIELD_W - 0.3, PLAYFIELD_L - 0.3);
+const fieldMat = new THREE.MeshStandardMaterial({ color: 0x181830, roughness: 0.3, metalness: 0.1 });
+const fieldMesh = new THREE.Mesh(fieldGeo, fieldMat);
+fieldMesh.rotation.x = -Math.PI / 2;
+fieldMesh.position.y = 0.002;
+fieldMesh.receiveShadow = true;
+tableGroup.add(fieldMesh);
+
+// ==================== WALLS ====================
+function createWall(w, h, d, x, y, z, color = 0x334466) {
+    const geo = new THREE.BoxGeometry(w, h, d);
+    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.3, metalness: 0.6 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    tableGroup.add(mesh);
+    return mesh;
+}
+
+const wallY = WALL_H / 2;
+createWall(WALL_T, WALL_H, PLAYFIELD_L, -PLAYFIELD_HW - WALL_T / 2, wallY, 0);
+createWall(WALL_T, WALL_H, PLAYFIELD_L, PLAYFIELD_HW + WALL_T / 2, wallY, 0);
+createWall(PLAYFIELD_W + WALL_T * 2, WALL_H, WALL_T, 0, wallY, PLAYFIELD_HL + WALL_T / 2);
+
+// Lower guide walls (funnel toward flippers)
+function createGuide(x, z, w, d, rotY) {
+    const geo = new THREE.BoxGeometry(w, WALL_H, d);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x445566, roughness: 0.3, metalness: 0.6 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, wallY, z);
+    mesh.rotation.y = rotY;
+    mesh.castShadow = true;
+    tableGroup.add(mesh);
+    return mesh;
+}
+
+// Angled guides above flippers
+createGuide(-3.5, -5.8, 3.5, WALL_T, 0.55);
+createGuide(3.5, -5.8, 3.5, WALL_T, -0.55);
+
+// Separator wall for launch lane
+const sepGeo = new THREE.BoxGeometry(WALL_T, WALL_H, 5.5);
+const sepMat = new THREE.MeshStandardMaterial({ color: 0x445566, roughness: 0.3, metalness: 0.5 });
+const sepMesh = new THREE.Mesh(sepGeo, sepMat);
+sepMesh.position.set(2.6, wallY, -PLAYFIELD_HL + 2.75);
+sepMesh.castShadow = true;
+tableGroup.add(sepMesh);
+
+// ==================== BUMPERS ====================
+const bumperMeshes = [];
+const bumperLights = [];
+
+BUMPER_POSITIONS.forEach((pos, i) => {
+    const bumperGroup = new THREE.Group();
+
+    // Base
+    const baseGeo = new THREE.CylinderGeometry(BUMPER_R, BUMPER_R + 0.1, 0.18, 32);
+    const baseMat = new THREE.MeshStandardMaterial({ color: 0x222233, roughness: 0.3, metalness: 0.7 });
+    const base = new THREE.Mesh(baseGeo, baseMat);
+    base.position.y = 0.09;
+    base.castShadow = true;
+    bumperGroup.add(base);
+
+    // Mushroom cap
+    const capGeo = new THREE.CylinderGeometry(BUMPER_R, BUMPER_R - 0.1, 0.14, 32);
+    const capMat = new THREE.MeshStandardMaterial({
+        color: BUMPER_COLORS[i],
+        roughness: 0.2,
+        metalness: 0.1,
+        emissive: BUMPER_COLORS[i],
+        emissiveIntensity: 0.5
+    });
+    const cap = new THREE.Mesh(capGeo, capMat);
+    cap.position.y = 0.22;
+    cap.castShadow = true;
+    bumperGroup.add(cap);
+
+    // Skirt
+    const skirtGeo = new THREE.CylinderGeometry(BUMPER_R + 0.05, BUMPER_R + 0.08, 0.08, 32);
+    const skirtMat = new THREE.MeshStandardMaterial({ color: 0x111122, roughness: 0.2, metalness: 0.8 });
+    const skirt = new THREE.Mesh(skirtGeo, skirtMat);
+    skirt.position.y = 0.04;
+    bumperGroup.add(skirt);
+
+    bumperGroup.position.set(pos[0], 0, pos[1]);
+    tableGroup.add(bumperGroup);
+    bumperMeshes.push({ group: bumperGroup, cap, pos, hit: false, timer: 0, color: BUMPER_COLORS[i] });
+
+    // Point light for each bumper
+    const light = new THREE.PointLight(BUMPER_COLORS[i], 1.5, 2.5, 2);
+    light.position.set(pos[0], 0.35, pos[1]);
+    tableGroup.add(light);
+    bumperLights.push(light);
+});
+
+// ==================== FLIPPERS ====================
+function createFlipperPivot(pivotX, pivotZ, isLeft) {
+    const pivot = new THREE.Group();
+    pivot.position.set(pivotX, FLIPPER_THICK / 2, pivotZ);
+    tableGroup.add(pivot);
+
+    const geo = new THREE.BoxGeometry(FLIPPER_L, FLIPPER_THICK, FLIPPER_W);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xccccdd, roughness: 0.25, metalness: 0.7 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(FLIPPER_L / 2, 0, 0);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    pivot.add(mesh);
+
+    // Rubber tip indicator
+    const tipGeo = new THREE.CylinderGeometry(FLIPPER_W / 2 + 0.02, FLIPPER_W / 2 + 0.02, 0.06, 8);
+    const tipMat = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.6, metalness: 0.1 });
+    const tip = new THREE.Mesh(tipGeo, tipMat);
+    tip.rotation.z = Math.PI / 2;
+    tip.position.set(FLIPPER_L, 0, 0);
+    pivot.add(tip);
+
+    return { pivot, mesh, pivotX, pivotZ };
+}
+
+const leftFlipper = createFlipperPivot(LEFT_PIVOT_X, FLIPPER_PIVOT_Z, true);
+const rightFlipper = createFlipperPivot(RIGHT_PIVOT_X, FLIPPER_PIVOT_Z, false);
+
+// ==================== BALL ====================
+const ballGeo = new THREE.SphereGeometry(BALL_R, 48, 48);
+const ballMat = new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 0.12, metalness: 0.95 });
+const ballMesh = new THREE.Mesh(ballGeo, ballMat);
+ballMesh.castShadow = true;
+ballMesh.position.set(0, BALL_R, 0);
+tableGroup.add(ballMesh);
+
+// ==================== DECORATIVE ELEMENTS ====================
+// Neon trim lines along walls
+function createTrimLine(x, z, w, d) {
+    const geo = new THREE.PlaneGeometry(w, d);
+    const mat = new THREE.MeshBasicMaterial({ color: 0x4466ff, side: THREE.DoubleSide, transparent: true, opacity: 0.3 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(x, 0.005, z);
+    tableGroup.add(mesh);
+    return mesh;
+}
+createTrimLine(0, -PLAYFIELD_HL * 0.65, PLAYFIELD_W - 0.6, 0.04);
+createTrimLine(0, PLAYFIELD_HL * 0.65, PLAYFIELD_W - 0.6, 0.04);
+
+// ==================== GAME STATE ====================
+const state = {
+    score: 0,
+    lives: 5,
+    ball: { x: LAUNCH_X, z: LAUNCH_Z, vx: 0, vz: 0, active: false },
+    left: { angle: FLIPPER_REST, targetAngle: FLIPPER_REST, velocity: 0 },
+    right: { angle: Math.PI - FLIPPER_REST, targetAngle: Math.PI - FLIPPER_REST, velocity: 0 },
+    launchCharge: 0,
+    isCharging: false,
+    gameOver: false,
+    lastBumper: -1,
+    shakeAmount: 0
+};
+
+// ==================== UI HELPERS ====================
+const scoreEl = document.getElementById('score-value');
+const livesEl = document.getElementById('lives-value');
+const messageEl = document.getElementById('message');
+
+function setMessage(text, duration = 0) {
+    messageEl.textContent = text;
+    messageEl.style.opacity = '1';
+    if (duration > 0) {
+        setTimeout(() => { messageEl.style.opacity = '0'; }, duration);
+    }
+}
+
+function updateUI() {
+    scoreEl.textContent = state.score.toLocaleString();
+    livesEl.textContent = state.lives;
+}
+
+function addScore(points) {
+    state.score += points;
+    updateUI();
+}
+
+function loseBall() {
+    state.lives--;
+    updateUI();
+    state.shakeAmount = 0.3;
+    if (state.lives <= 0) {
+        state.gameOver = true;
+        state.ball.active = false;
+        setMessage('游戏结束! 按 R 重新开始');
+    } else {
+        resetBall();
+        setMessage(`剩余 ${state.lives} 个球`, 1500);
+    }
+}
+
+function resetBall() {
+    state.ball.x = LAUNCH_X;
+    state.ball.z = LAUNCH_Z;
+    state.ball.vx = 0;
+    state.ball.vz = 0;
+    state.ball.active = false;
+    state.launchCharge = 0;
+    state.isCharging = false;
+    if (!state.gameOver) {
+        setMessage('按住空格发射!', 0);
+    }
+}
+
+// ==================== INPUT ====================
+const keys = {};
+window.addEventListener('keydown', (e) => {
+    keys[e.key.toLowerCase()] = true;
+    keys[e.code] = true;
+    e.preventDefault();
+});
+window.addEventListener('keyup', (e) => {
+    keys[e.key.toLowerCase()] = false;
+    keys[e.code] = false;
+    e.preventDefault();
+});
+
+// ==================== PHYSICS HELPERS ====================
+function closestPointOnSegment(px, pz, ax, az, bx, bz) {
+    const dx = bx - ax, dz = bz - az;
+    const lenSq = dx * dx + dz * dz;
+    if (lenSq < 0.0001) return { x: ax, z: az, t: 0 };
+    let t = ((px - ax) * dx + (pz - az) * dz) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+    return { x: ax + t * dx, z: az + t * dz, t };
+}
+
+function dist(a, b) {
+    const dx = a.x - b.x, dz = a.z - b.z;
+    return Math.sqrt(dx * dx + dz * dz);
+}
+
+// ==================== PHYSICS UPDATE ====================
+function updateFlipper(flipper, isActive, dt) {
+    const targetAngle = isActive ? (flipper === state.left ? FLIPPER_ACTIVE : Math.PI - FLIPPER_ACTIVE)
+                                 : (flipper === state.left ? FLIPPER_REST : Math.PI - FLIPPER_REST);
+    flipper.targetAngle = targetAngle;
+
+    const diff = targetAngle - flipper.angle;
+    const maxStep = FLIPPER_SPEED * dt;
+
+    if (Math.abs(diff) < maxStep) {
+        flipper.velocity = diff / dt;
+        flipper.angle = targetAngle;
+    } else {
+        flipper.velocity = Math.sign(diff) * FLIPPER_SPEED;
+        flipper.angle += Math.sign(diff) * maxStep;
+    }
+}
+
+function checkWallCollisions(ball) {
+    const b = ball;
+    const leftWallX = -PLAYFIELD_HW + WALL_T / 2;
+    const rightWallX = PLAYFIELD_HW - WALL_T / 2;
+    const topWallZ = PLAYFIELD_HL - WALL_T / 2;
+    const sepWallX = 2.6 + WALL_T / 2;
+    const sepTopZ = -PLAYFIELD_HL + 5.5;
+    const sepBotZ = -PLAYFIELD_HL;
+
+    // Left wall
+    if (b.x - BALL_R < leftWallX) {
+        b.x = leftWallX + BALL_R;
+        if (b.vx < 0) b.vx = -b.vx * WALL_BOUNCE;
+    }
+    // Right wall (full height)
+    if (b.x + BALL_R > rightWallX) {
+        b.x = rightWallX - BALL_R;
+        if (b.vx > 0) b.vx = -b.vx * WALL_BOUNCE;
+    }
+    // Top wall
+    if (b.z + BALL_R > topWallZ) {
+        b.z = topWallZ - BALL_R;
+        if (b.vz > 0) b.vz = -b.vz * WALL_BOUNCE;
+    }
+    // Separator wall (launch lane divider) - only if ball is below the top of the separator
+    if (b.z < sepTopZ && b.z > sepBotZ) {
+        if (b.x + BALL_R > sepWallX && b.x < sepWallX + 0.5) {
+            b.x = sepWallX - BALL_R;
+            if (b.vx > 0) b.vx = -b.vx * WALL_BOUNCE;
+        }
+    }
+
+    // Angled guides collision (simplified as circular checks near the guide positions)
+    // Left guide near (-3.5, -5.8)
+    checkGuideCollision(b, -4.0, -5.8, 0.55);
+    // Right guide near (3.5, -5.8)
+    checkGuideCollision(b, 4.0, -5.8, -0.55);
+
+    // Drain detection
+    if (b.z < DRAIN_Z) {
+        return true; // ball drained
+    }
+    return false;
+}
+
+function checkGuideCollision(b, gx, gz, angle) {
+    // Simplified: treat guide as a line and check if ball crosses it from outside
+    // Guide line goes from guide center outward at the given angle
+    const guideLen = 3.5;
+    const cosA = Math.cos(angle), sinA = Math.sin(angle);
+    const endX = gx + guideLen * cosA;
+    const endZ = gz + guideLen * sinA;
+
+    const cp = closestPointOnSegment(b.x, b.z, gx, gz, endX, endZ);
+    const d = dist({ x: b.x, z: b.z }, cp);
+    const minDist = BALL_R + WALL_T / 2;
+
+    if (d < minDist) {
+        const nx = (b.x - cp.x) / d;
+        const nz = (b.z - cp.z) / d;
+        b.x = cp.x + nx * minDist;
+        b.z = cp.z + nz * minDist;
+        const velN = b.vx * nx + b.vz * nz;
+        if (velN < 0) {
+            b.vx -= (1 + WALL_BOUNCE) * velN * nx;
+            b.vz -= (1 + WALL_BOUNCE) * velN * nz;
+        }
+    }
+}
+
+function checkBumperCollisions(ball) {
+    let hitAny = false;
+    const b = ball;
+
+    BUMPER_POSITIONS.forEach((pos, i) => {
+        const dx = b.x - pos[0];
+        const dz = b.z - pos[1];
+        const d = Math.sqrt(dx * dx + dz * dz);
+        const minDist = BALL_R + BUMPER_R;
+
+        if (d < minDist && d > 0.001) {
+            const nx = dx / d;
+            const nz = dz / d;
+            b.x = pos[0] + nx * minDist;
+            b.z = pos[1] + nz * minDist;
+            const velN = b.vx * nx + b.vz * nz;
+            if (velN < 0) {
+                b.vx -= (1 + BUMPER_BOUNCE) * velN * nx;
+                b.vz -= (1 + BUMPER_BOUNCE) * velN * nz;
+            }
+            if (i !== state.lastBumper) {
+                addScore(100);
+                bumperMeshes[i].hit = true;
+                bumperMeshes[i].timer = 0.25;
+                bumperLights[i].intensity = 8;
+                state.lastBumper = i;
+                state.shakeAmount = Math.max(state.shakeAmount, 0.06);
+            }
+            hitAny = true;
+        }
+    });
+
+    if (!hitAny) {
+        state.lastBumper = -1;
+    }
+}
+
+function checkFlipperCollision(ball, flipperState, pivotX, pivotZ) {
+    const b = ball;
+    const angle = flipperState.angle;
+    const tipX = pivotX + FLIPPER_L * Math.cos(angle);
+    const tipZ = pivotZ + FLIPPER_L * Math.sin(angle);
+
+    const cp = closestPointOnSegment(b.x, b.z, pivotX, pivotZ, tipX, tipZ);
+    const dx = b.x - cp.x;
+    const dz = b.z - cp.z;
+    const d = Math.sqrt(dx * dx + dz * dz);
+    const minDist = BALL_R + FLIPPER_W / 2;
+
+    if (d < minDist && d > 0.0001) {
+        const nx = dx / d;
+        const nz = dz / d;
+
+        // Push ball out
+        const overlap = minDist - d;
+        b.x += nx * overlap;
+        b.z += nz * overlap;
+
+        // Contact point velocity due to flipper rotation
+        const rx = cp.x - pivotX;
+        const rz = cp.z - pivotZ;
+        const r = Math.sqrt(rx * rx + rz * rz);
+        const tangentX = -rz;
+        const tangentZ = rx;
+        const tLen = Math.sqrt(tangentX * tangentX + tangentZ * tangentZ);
+        if (tLen > 0.0001) {
+            const tNX = tangentX / tLen;
+            const tNZ = tangentZ / tLen;
+            const surfaceSpeed = flipperState.velocity * r;
+            const svx = tNX * surfaceSpeed;
+            const svz = tNZ * surfaceSpeed;
+
+            const relVx = b.vx - svx;
+            const relVz = b.vz - svz;
+            const relVelN = relVx * nx + relVz * nz;
+
+            if (relVelN < 0) {
+                b.vx -= (1 + 0.35) * relVelN * nx;
+                b.vz -= (1 + 0.35) * relVelN * nz;
+                b.vx += svx * 0.45;
+                b.vz += svz * 0.45;
+            }
+        }
+
+        // Clamp maximum ball speed
+        const speed = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
+        const maxSpeed = 14;
+        if (speed > maxSpeed) {
+            const scale = maxSpeed / speed;
+            b.vx *= scale;
+            b.vz *= scale;
+        }
+    }
+}
+
+function updatePhysics(dt) {
+    const b = state.ball;
+
+    if (!b.active) return;
+
+    // Apply gravity
+    b.vz -= G_EFF * dt;
+
+    // Apply friction
+    b.vx *= FRICTION;
+    b.vz *= FRICTION;
+
+    // Update position
+    b.x += b.vx * dt;
+    b.z += b.vz * dt;
+
+    // Collision detection
+    if (checkWallCollisions(b)) {
+        loseBall();
+        return;
+    }
+    checkBumperCollisions(b);
+    checkFlipperCollision(b, state.left, LEFT_PIVOT_X, FLIPPER_PIVOT_Z);
+    checkFlipperCollision(b, state.right, RIGHT_PIVOT_X, FLIPPER_PIVOT_Z);
+
+    // Drain check (between or past flippers when below them)
+    if (b.z < FLIPPER_PIVOT_Z - 1.0 && Math.abs(b.x) < 1.5) {
+        loseBall();
+        return;
+    }
+
+    // Also drain if too far below
+    if (b.z < DRAIN_Z) {
+        loseBall();
+    }
+}
+
+// ==================== RENDER UPDATE ====================
+function updateRender() {
+    // Ball position (on table surface + radius above)
+    const b = state.ball;
+    ballMesh.position.set(b.x, BALL_R, b.z);
+
+    // Flipper rotations
+    leftFlipper.pivot.rotation.y = state.left.angle;
+    rightFlipper.pivot.rotation.y = state.right.angle;
+
+    // Bumper animations
+    const now = performance.now() / 1000;
+    bumperMeshes.forEach((bm, i) => {
+        if (bm.hit) {
+            bm.timer -= 0.016;
+            const t = Math.max(0, bm.timer / 0.25);
+            const s = 1 + t * 0.15;
+            bm.group.scale.setScalar(s);
+            bm.cap.material.emissiveIntensity = 0.5 + t * 1.5;
+            bumperLights[i].intensity = 1.5 + t * 6.5;
+            if (bm.timer <= 0) {
+                bm.hit = false;
+                bm.group.scale.setScalar(1);
+                bm.cap.material.emissiveIntensity = 0.5;
+                bumperLights[i].intensity = 1.5;
+            }
+        }
+    });
+
+    // Camera shake
+    if (state.shakeAmount > 0.001) {
+        const sx = (Math.random() - 0.5) * state.shakeAmount;
+        const sy = (Math.random() - 0.5) * state.shakeAmount;
+        camera.position.x += sx;
+        camera.position.y += sy;
+        state.shakeAmount *= 0.85;
+    }
+
+    // Ball glow effect: slight emissive when moving fast
+    const speed = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
+    ballMat.emissive = new THREE.Color(0x222222);
+    ballMat.emissiveIntensity = Math.min(speed / 10, 0.5);
+}
+
+// ==================== GAME LOOP ====================
+let lastTime = performance.now();
+const FIXED_DT = 1 / 120;
+let accumulator = 0;
+
+function animate(timestamp) {
+    requestAnimationFrame(animate);
+
+    let rawDt = (timestamp - lastTime) / 1000;
+    lastTime = timestamp;
+    if (rawDt > 0.1) rawDt = 0.1;
+
+    // ===== INPUT HANDLING =====
+    const leftActive = keys['a'] || keys['arrowleft'];
+    const rightActive = keys['d'] || keys['arrowright'];
+    const spaceDown = keys[' '] || keys['space'];
+
+    // Restart
+    if (keys['r']) {
+        state.score = 0;
+        state.lives = 5;
+        state.gameOver = false;
+        state.shakeAmount = 0;
+        updateUI();
+        resetBall();
+        keys['r'] = false;
+    }
+
+    // Launch mechanism
+    if (!state.ball.active && !state.gameOver) {
+        if (spaceDown && !state.isCharging) {
+            state.isCharging = true;
+            state.launchCharge = 0;
+        }
+        if (state.isCharging && spaceDown) {
+            state.launchCharge = Math.min(state.launchCharge + rawDt * 14, LAUNCH_MAX);
+            const pct = state.launchCharge / LAUNCH_MAX;
+            setMessage(`发射力度: ${Math.round(pct * 100)}%`, 0);
+        }
+        if (state.isCharging && !spaceDown) {
+            const power = LAUNCH_MIN + (state.launchCharge / LAUNCH_MAX) * (LAUNCH_MAX - LAUNCH_MIN);
+            state.ball.vx = -Math.sin(TABLE_ANGLE * 0.7) * power * 0.15;
+            state.ball.vz = power;
+            state.ball.active = true;
+            state.isCharging = false;
+            state.launchCharge = 0;
+            setMessage('', 0);
+        }
+    }
+
+    // ===== PHYSICS =====
+    accumulator += rawDt;
+    while (accumulator >= FIXED_DT) {
+        updateFlipper(state.left, leftActive, FIXED_DT);
+        updateFlipper(state.right, rightActive, FIXED_DT);
+        updatePhysics(FIXED_DT);
+        accumulator -= FIXED_DT;
+    }
+
+    // ===== RENDER =====
+    updateRender();
+    renderer.render(scene, camera);
+}
+
+// ==================== RESIZE HANDLER ====================
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ==================== START ====================
+updateUI();
+resetBall();
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>
