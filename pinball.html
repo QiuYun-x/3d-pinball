@@ -86,6 +86,7 @@ body {
     </div>
 </div>
 <div id="message"></div>
+<div id="debug" style="position:fixed;bottom:100px;left:50%;transform:translateX(-50%);z-index:20;pointer-events:none;color:#0f0;font-size:12px;font-family:monospace;text-align:center;opacity:0.6;"></div>
 <div id="controls">
     <div class="key-hint"><span>A</span> 左挡板</div>
     <div class="key-hint"><span>D</span> 右挡板</div>
@@ -122,7 +123,7 @@ const BUMPER_R = 0.48;
 const FLIPPER_L = 2.2;
 const FLIPPER_W = 0.22;
 const FLIPPER_THICK = 0.1;
-const FLIPPER_SPEED = 22;
+const FLIPPER_SPEED = 10;
 const FLIPPER_REST = 28 * Math.PI / 180;
 const FLIPPER_ACTIVE = 72 * Math.PI / 180;
 const LAUNCH_MAX = 9.5;
@@ -420,9 +421,20 @@ document.addEventListener('click', () => bodyEl.focus());
 document.addEventListener('pointerdown', () => bodyEl.focus());
 
 const keys = {};
+const debugEl = document.getElementById('debug');
 window.addEventListener('keydown', (e) => {
-    keys[e.key.toLowerCase()] = true;
+    const k = e.key.toLowerCase();
+    keys[k] = true;
     keys[e.code] = true;
+
+    const relevant = ['KeyA','KeyD','ArrowLeft','ArrowRight','Space','KeyR'];
+    if (relevant.includes(e.code)) {
+        const la = keys['a']||keys['arrowleft']||keys['KeyA']||keys['ArrowLeft'];
+        const ra = keys['d']||keys['arrowright']||keys['KeyD']||keys['ArrowRight'];
+        debugEl.textContent = 'A='+(la||false)+' D='+(ra||false)+' | leftActive='+la+' rightActive='+ra;
+        console.log('KEYDOWN code='+e.code+' key='+e.key+' keys[a]='+keys['a']+' keys[KeyA]='+keys['KeyA']+' leftActive='+la);
+    }
+
     if (e.code === 'Space' || e.code === 'ArrowLeft' || e.code === 'ArrowRight' ||
         e.code === 'KeyA' || e.code === 'KeyD' || e.code === 'KeyR' ||
         e.code === 'ArrowUp' || e.code === 'ArrowDown' || e.code === 'KeyW' || e.code === 'KeyS') {
@@ -433,6 +445,12 @@ window.addEventListener('keyup', (e) => {
     keys[e.key.toLowerCase()] = false;
     keys[e.code] = false;
     e.preventDefault();
+    const relevant = ['KeyA','KeyD','ArrowLeft','ArrowRight','Space'];
+    if (relevant.includes(e.code)) {
+        const la = keys['a']||keys['arrowleft']||keys['KeyA']||keys['ArrowLeft'];
+        const ra = keys['d']||keys['arrowright']||keys['KeyD']||keys['ArrowRight'];
+        debugEl.textContent = 'A='+(la||false)+' D='+(ra||false);
+    }
 });
 
 // Blur/focus tracking
@@ -684,6 +702,14 @@ function updateRender() {
     // Flipper rotations
     leftFlipper.pivot.rotation.y = state.left.angle;
     rightFlipper.pivot.rotation.y = state.right.angle;
+
+    // Flipper visual feedback: glow when activated
+    const leftOn = Math.abs(state.left.angle - FLIPPER_REST) > 0.001;
+    const rightOn = Math.abs(state.right.angle - (Math.PI - FLIPPER_REST)) > 0.001;
+    leftFlipper.mesh.material.emissive = new THREE.Color(leftOn ? 0x444444 : 0x000000);
+    leftFlipper.mesh.material.emissiveIntensity = leftOn ? 0.8 : 0;
+    rightFlipper.mesh.material.emissive = new THREE.Color(rightOn ? 0x444444 : 0x000000);
+    rightFlipper.mesh.material.emissiveIntensity = rightOn ? 0.8 : 0;
 
     // Bumper animations
     const now = performance.now() / 1000;
