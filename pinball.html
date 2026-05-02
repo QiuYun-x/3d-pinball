@@ -428,39 +428,38 @@ let imeActive = false;
 window.addEventListener('compositionstart', () => { imeActive = true; });
 window.addEventListener('compositionend', (e) => { imeActive = false; });
 
-// Use capture phase to get events before IME consumes them
+// Log ALL key events for debugging
 window.addEventListener('keydown', (e) => {
-    const k = e.key.toLowerCase();
-    keys[k] = true;
-    keys[e.code] = true;
+    // Always log to console
+    console.log('KEYDOWN code='+e.code+' key='+e.key+' isComposing='+e.isComposing+' repeat='+e.repeat);
 
-    const relevant = ['KeyA','KeyD','ArrowLeft','ArrowRight','Space','KeyR'];
-    if (relevant.includes(e.code)) {
-        const la = keys['a']||keys['arrowleft']||keys['KeyA']||keys['ArrowLeft'];
-        const ra = keys['d']||keys['arrowright']||keys['KeyD']||keys['ArrowRight'];
-        const imeWarn = imeActive ? ' [IME ON! 请切英文]' : '';
-        debugEl.textContent = 'A='+(la||false)+' D='+(ra||false)+' | code='+e.code+imeWarn;
-        console.log('KEYDOWN code='+e.code+' key='+e.key+' isComposing='+e.isComposing+' imeActive='+imeActive+' leftActive='+la);
-    }
+    // Track via code (physical key — most reliable)
+    keys[e.code] = true;
+    // Also track via key (character value)
+    if (e.key && e.key.length === 1) keys[e.key.toLowerCase()] = true;
+
+    // Update debug display
+    const la = keys['KeyA'] || keys['ArrowLeft'] || keys['a'] || keys['arrowleft'];
+    const ra = keys['KeyD'] || keys['ArrowRight'] || keys['d'] || keys['arrowright'];
+    const sp = keys['Space'] || keys[' '];
+    debugEl.textContent = 'A='+!!la+' D='+!!ra+' Space='+!!sp+' | code='+e.code+' key='+e.key+' comp='+e.isComposing;
 
     if (e.code === 'Space' || e.code === 'ArrowLeft' || e.code === 'ArrowRight' ||
         e.code === 'KeyA' || e.code === 'KeyD' || e.code === 'KeyR' ||
         e.code === 'ArrowUp' || e.code === 'ArrowDown' || e.code === 'KeyW' || e.code === 'KeyS') {
         e.preventDefault();
     }
-}, true); // CAPTURE phase — fires before IME can consume the event
+}, true);
 
 window.addEventListener('keyup', (e) => {
-    keys[e.key.toLowerCase()] = false;
+    console.log('KEYUP code='+e.code+' key='+e.key);
     keys[e.code] = false;
+    if (e.key && e.key.length === 1) keys[e.key.toLowerCase()] = false;
     e.preventDefault();
-    const relevant = ['KeyA','KeyD','ArrowLeft','ArrowRight','Space'];
-    if (relevant.includes(e.code)) {
-        const la = keys['a']||keys['arrowleft']||keys['KeyA']||keys['ArrowLeft'];
-        const ra = keys['d']||keys['arrowright']||keys['KeyD']||keys['ArrowRight'];
-        debugEl.textContent = 'A='+(la||false)+' D='+(ra||false);
-    }
-}, true); // CAPTURE phase
+    const la = keys['KeyA'] || keys['ArrowLeft'] || keys['a'] || keys['arrowleft'];
+    const ra = keys['KeyD'] || keys['ArrowRight'] || keys['d'] || keys['arrowright'];
+    debugEl.textContent = 'A='+!!la+' D='+!!ra;
+}, true);
 
 // Blur/focus tracking
 let hasFocus = true;
@@ -767,9 +766,9 @@ function animate(timestamp) {
     if (rawDt > 0.1) rawDt = 0.1;
 
     // ===== INPUT HANDLING =====
-    const leftActive = keys['a'] || keys['arrowleft'] || keys['KeyA'] || keys['ArrowLeft'];
-    const rightActive = keys['d'] || keys['arrowright'] || keys['KeyD'] || keys['ArrowRight'];
-    const spaceDown = keys[' '] || keys['space'] || keys['Space'];
+    const leftActive = keys['KeyA'] || keys['ArrowLeft'] || keys['a'] || keys['arrowleft'];
+    const rightActive = keys['KeyD'] || keys['ArrowRight'] || keys['d'] || keys['arrowright'];
+    const spaceDown = keys['Space'] || keys[' '] || keys['space'];
 
     if (!hasFocus && !state.ball.active) {
         setMessage('点击游戏画面开始', 0);
