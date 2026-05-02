@@ -88,12 +88,16 @@ body {
 <div id="message"></div>
 <div id="debug" style="position:fixed;bottom:100px;left:50%;transform:translateX(-50%);z-index:20;pointer-events:none;color:#0f0;font-size:12px;font-family:monospace;text-align:center;opacity:0.6;"></div>
 <div id="controls">
-    <div class="key-hint"><span>A</span> 左挡板</div>
-    <div class="key-hint"><span>D</span> 右挡板</div>
+    <div class="key-hint"><span>A / 点击左下</span> 左挡板</div>
+    <div class="key-hint"><span>D / 点击右下</span> 右挡板</div>
     <div class="key-hint"><span>空格</span> 发射</div>
     <div class="key-hint"><span>R</span> 重新开始</div>
 </div>
 <div id="game-canvas"></div>
+
+<!-- On-screen flipper buttons -->
+<div id="btn-left" style="position:fixed;bottom:0;left:0;width:50%;height:35%;z-index:15;cursor:pointer;background:rgba(100,150,255,0.08);border-right:1px solid rgba(255,255,255,0.1);display:flex;align-items:flex-end;justify-content:center;padding-bottom:30px;color:rgba(255,255,255,0.5);font-size:24px;font-weight:700;letter-spacing:4px;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;">左挡板</div>
+<div id="btn-right" style="position:fixed;bottom:0;right:0;width:50%;height:35%;z-index:15;cursor:pointer;background:rgba(255,150,100,0.08);border-left:1px solid rgba(255,255,255,0.1);display:flex;align-items:flex-end;justify-content:center;padding-bottom:30px;color:rgba(255,255,255,0.5);font-size:24px;font-weight:700;letter-spacing:4px;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;">右挡板</div>
 
 <script type="importmap">
 {
@@ -442,7 +446,7 @@ window.addEventListener('keydown', (e) => {
     const la = keys['KeyA'] || keys['ArrowLeft'] || keys['a'] || keys['arrowleft'];
     const ra = keys['KeyD'] || keys['ArrowRight'] || keys['d'] || keys['arrowright'];
     const sp = keys['Space'] || keys[' '];
-    debugEl.textContent = 'A='+!!la+' D='+!!ra+' Space='+!!sp+' | code='+e.code+' key='+e.key+' comp='+e.isComposing;
+    debugEl.textContent = 'A='+!!la+' D='+!!ra+' Space='+!!sp+' | click='+pointerLeft+'/'+pointerRight+' | code='+e.code+' key='+e.key;
 
     if (e.code === 'Space' || e.code === 'ArrowLeft' || e.code === 'ArrowRight' ||
         e.code === 'KeyA' || e.code === 'KeyD' || e.code === 'KeyR' ||
@@ -461,9 +465,27 @@ window.addEventListener('keyup', (e) => {
     debugEl.textContent = 'A='+!!la+' D='+!!ra;
 }, true);
 
+// On-screen flipper buttons (bypass keyboard IME issues)
+let pointerLeft = false, pointerRight = false;
+const btnLeft = document.getElementById('btn-left');
+const btnRight = document.getElementById('btn-right');
+
+function addPointerHandlers(el, setDown, setUp) {
+    el.addEventListener('pointerdown', (e) => { e.preventDefault(); setDown(true); }, true);
+    el.addEventListener('pointerup', (e) => { e.preventDefault(); setDown(false); }, true);
+    el.addEventListener('pointerleave', (e) => { setDown(false); }, true);
+    el.addEventListener('pointercancel', (e) => { setDown(false); }, true);
+    // Touch events for mobile
+    el.addEventListener('touchstart', (e) => { e.preventDefault(); setDown(true); }, {passive: false});
+    el.addEventListener('touchend', (e) => { e.preventDefault(); setDown(false); }, {passive: false});
+    el.addEventListener('touchcancel', (e) => { setDown(false); });
+}
+addPointerHandlers(btnLeft, (v) => { pointerLeft = v; }, () => { pointerLeft = false; });
+addPointerHandlers(btnRight, (v) => { pointerRight = v; }, () => { pointerRight = false; });
+
 // Blur/focus tracking
 let hasFocus = true;
-window.addEventListener('blur', () => { hasFocus = false; for (const k in keys) keys[k] = false; });
+window.addEventListener('blur', () => { hasFocus = false; for (const k in keys) keys[k] = false; pointerLeft = false; pointerRight = false; });
 window.addEventListener('focus', () => { hasFocus = true; bodyEl.focus(); });
 
 // ==================== PHYSICS HELPERS ====================
@@ -766,8 +788,8 @@ function animate(timestamp) {
     if (rawDt > 0.1) rawDt = 0.1;
 
     // ===== INPUT HANDLING =====
-    const leftActive = keys['KeyA'] || keys['ArrowLeft'] || keys['a'] || keys['arrowleft'];
-    const rightActive = keys['KeyD'] || keys['ArrowRight'] || keys['d'] || keys['arrowright'];
+    const leftActive = pointerLeft || keys['KeyA'] || keys['ArrowLeft'] || keys['a'] || keys['arrowleft'];
+    const rightActive = pointerRight || keys['KeyD'] || keys['ArrowRight'] || keys['d'] || keys['arrowright'];
     const spaceDown = keys['Space'] || keys[' '] || keys['space'];
 
     if (!hasFocus && !state.ball.active) {
